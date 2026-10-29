@@ -45,7 +45,7 @@ Download and extract the two archives from the
 
 Elsewhere? Set `REFIT_RAW_DIR` and `REFIT_CLEAN_DIR` environment variables to the two folders.
 
-Then run, in order, from the repository root:
+Then run, in order, from the repository root (or just `run_all.bat`):
 
 ```
 python src\clean_house1.py     ~1 min   Section 1
@@ -119,7 +119,8 @@ reports come from these runs, not from the AI.
   United Kingdom households from a two-year longitudinal study. *Scientific Data* 4, 160122.
   (REFIT dataset description; cited per the readme.)
 - Kelly, J. and Knottenbelt, W. (2015). Neural NILM: Deep neural networks applied to energy
-  disaggregation. *BuildSys '15*. Adopted: 20 W on-threshold for washing machines; evaluating on a
+  disaggregation. *BuildSys '15*. (Uses UK-DALE rather than REFIT, but its washing-machine settings
+  and evaluation protocol are widely reused in later REFIT studies.) Adopted: 20 W on-threshold for washing machines; evaluating on a
   house not seen in training; on/off precision, recall and F1 next to power errors.
 - Zhang, C., Zhong, M., Wang, Z., Goddard, N. and Sutton, C. (2018). Sequence-to-point learning with
   neural networks for non-intrusive load monitoring. *AAAI*. Adopted: predict the appliance power at

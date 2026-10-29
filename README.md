@@ -24,7 +24,7 @@ outputs/               generated tables (quality report, outages, cycles, metric
 
 ## Setup and run (Windows cmd; macOS/Linux equivalents in brackets)
 
-Requires Python 3.10+ (developed on 3.11.9).
+Requires Python 3.11+ (developed on 3.11.9; package versions pinned in `requirements.txt`).
 
 ```
 git clone https://github.com/khyatinagaria/flock_AI_KHYATI_NAGARIA.git

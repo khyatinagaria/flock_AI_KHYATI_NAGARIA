@@ -237,16 +237,13 @@ def plot_metrics(table):
     plt.close(fig)
 
 
-def main():
-    Xtr, ytr, _ = build(TRAIN)
-    Xva, yva, _ = build(VAL)
-    Xte, yte, mte = build(TEST)
-    print(f"train {len(Xtr):,} min | val {len(Xva):,} | test {len(Xte):,}")
-
+def fit_models(Xtr, ytr, Xva, yva, verbose=100):
+    """Fit the direct and two-stage LightGBM models (validation house used only for
+    early stopping and the detection threshold). Returns (predict_all, info)."""
     params = dict(n_estimators=1500, learning_rate=0.1, num_leaves=63, min_child_samples=200,
                   subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
                   random_state=SEED, verbose=-1)
-    stop = [lgb.early_stopping(50), lgb.log_evaluation(100)]
+    stop = [lgb.early_stopping(50, verbose=bool(verbose)), lgb.log_evaluation(verbose)]
 
     # direct regressor (early stopping on the validation house)
     model = lgb.LGBMRegressor(**params)
@@ -275,6 +272,19 @@ def main():
                 "profile": profile_baseline(ytr, Xtr, X),
                 "lgbm_direct": np.clip(model.predict(X), 0, WM_MAX_W),
                 "lgbm_2stage": two_stage(X)}
+
+    info = {"model": model, "clf": clf, "reg_on": reg_on, "thr": thr}
+    return all_preds, info
+
+
+def main():
+    Xtr, ytr, _ = build(TRAIN)
+    Xva, yva, _ = build(VAL)
+    Xte, yte, mte = build(TEST)
+    print(f"train {len(Xtr):,} min | val {len(Xva):,} | test {len(Xte):,}")
+
+    all_preds, info = fit_models(Xtr, ytr, Xva, yva)
+    model, clf, reg_on, thr = info["model"], info["clf"], info["reg_on"], info["thr"]
 
     preds = all_preds(Xte)
     table = pd.DataFrame({k: metrics(yte, p, yte.index) for k, p in preds.items()}).T

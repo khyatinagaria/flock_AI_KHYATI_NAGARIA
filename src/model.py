@@ -12,9 +12,18 @@ smart-meter history but would need a delay in a real-time setting.
 
 Models
     always_off   predicts 0 W (what you get by doing nothing; strong on MAE because
-                 the machine is off ~98% of the time)
+                 the machine is off ~95% of the time)
     profile      mean training-house washing-machine power for that weekday x hour
-    lightgbm     gradient-boosted trees on aggregate-window features
+    lgbm_direct  one gradient-boosted regressor on aggregate-window features
+    lgbm_2stage  "detect, then estimate": a classifier gives P(running), smoothed
+                 over 5 min; where it exceeds a threshold chosen on the validation
+                 house, a regressor trained only on running minutes gives the watts;
+                 elsewhere 0 W. This removes the low-level false power the direct
+                 regressor spreads over idle minutes.
+
+Data filter: minutes where the aggregate is exactly constant for an hour are
+dropped from training and evaluation. A real household always fluctuates by a few
+watts; a flat line means the meter stalled and the clean data was forward-filled.
 
 Outputs
     outputs/model_metrics.md, outputs/model_predictions_test.parquet
@@ -74,7 +83,9 @@ def build(houses):
     for h in houses:
         m = load_house(h)
         f = features(m)
-        ok = (~m["gap"]) & m["aggregate"].notna() & m["wm"].notna()
+        flat = m["aggregate"].rolling(60, center=True, min_periods=60).std() == 0
+        ok = (~m["gap"]) & (~flat) & m["aggregate"].notna() & m["wm"].notna()
+        print(f"house {h}: {int(flat.sum()):,} flat-line minutes dropped")
         X.append(f[ok])
         y.append(m.loc[ok, "wm"].clip(0, WM_MAX_W))
         meta.append(m.loc[ok, ["aggregate", "issues"]].assign(house=h))
@@ -86,6 +97,24 @@ def profile_baseline(train_y, train_X, X):
     prof = train_y.groupby([train_X["dow"], train_X["hour"]]).mean()
     idx = pd.MultiIndex.from_arrays([X["dow"], X["hour"]])
     return prof.reindex(idx).to_numpy()
+
+
+# ---- two-stage model ---------------------------------------------------------
+def smooth(p, index):
+    return pd.Series(p, index=index).rolling("5min", center=True).median().to_numpy()
+
+
+def best_threshold(y, prob):
+    """Probability threshold that maximises on/off F1 on the validation house."""
+    on = np.asarray(y) > ON_W
+    best = (0.5, -1)
+    for t in np.arange(0.1, 0.91, 0.05):
+        pred = prob > t
+        tp = (on & pred).sum()
+        f1 = 2 * tp / max(on.sum() + pred.sum(), 1)
+        if f1 > best[1]:
+            best = (round(float(t), 2), f1)
+    return best[0]
 
 
 # ---- metrics -----------------------------------------------------------------
@@ -121,7 +150,7 @@ def trace(ax, d, title):
     t = d.index.tz_convert(LOCAL_TZ)
     ax.plot(t, d["aggregate"], color=C_RAW, lw=0.8, label="Household aggregate (input)")
     ax.plot(t, d["actual"], color=C_CLEAN, lw=1.5, label="Washing machine, actual")
-    ax.plot(t, d["lightgbm"], color=C_FLAG, lw=1.3, label="Washing machine, predicted")
+    ax.plot(t, d["lightgbm"], color=C_FLAG, lw=1.3, label="Washing machine, predicted (two-stage)")
     ax.set_title(title, fontsize=10, loc="left")
     ax.set_ylabel("Power (W)", fontsize=8)
     ax.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%d %b %H:%M", tz=t.tz))
@@ -163,7 +192,7 @@ def plot_metrics(table):
     fig, axes = plt.subplots(1, 3, figsize=(12, 3))
     for ax, c in zip(axes, cols):
         v = table[c]
-        ax.barh(v.index, v.values, color=[C_RAW, C_ALT, C_CLEAN][: len(v)], height=0.55)
+        ax.barh(v.index, v.values, color=[C_RAW, C_RAW, C_ALT, C_CLEAN][: len(v)], height=0.55)
         for i, x in enumerate(v.values):
             ax.text(x, i, f" {x:.2f}", va="center", fontsize=8)
         ax.set_title(c, fontsize=10, loc="left")
@@ -186,36 +215,60 @@ def main():
     Xte, yte, mte = build(TEST)
     print(f"train {len(Xtr):,} min | val {len(Xva):,} | test {len(Xte):,}")
 
-    model = lgb.LGBMRegressor(n_estimators=1500, learning_rate=0.1, num_leaves=63,
-                              min_child_samples=200, subsample=0.8, subsample_freq=1,
-                              colsample_bytree=0.8, random_state=SEED, verbose=-1)
-    model.fit(Xtr, ytr, eval_set=[(Xva, yva)], eval_metric="l1",  # early stopping on house 15
-              callbacks=[lgb.early_stopping(50), lgb.log_evaluation(100)])
+    params = dict(n_estimators=1500, learning_rate=0.1, num_leaves=63, min_child_samples=200,
+                  subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
+                  random_state=SEED, verbose=-1)
+    stop = [lgb.early_stopping(50), lgb.log_evaluation(100)]
 
-    preds = {
-        "always_off": np.zeros(len(yte)),
-        "profile": profile_baseline(ytr, Xtr, Xte),
-        "lightgbm": np.clip(model.predict(Xte), 0, WM_MAX_W),
-    }
+    # direct regressor (early stopping on the validation house)
+    model = lgb.LGBMRegressor(**params)
+    model.fit(Xtr, ytr, eval_set=[(Xva, yva)], eval_metric="l1", callbacks=stop)
+
+    # two-stage: classifier for running / not running ...
+    clf = lgb.LGBMClassifier(**params)
+    clf.fit(Xtr, ytr > ON_W, eval_set=[(Xva, yva > ON_W)], callbacks=stop)
+    # ... and a regressor for the watts, trained only on running minutes
+    on_tr, on_va = ytr > ON_W, yva > ON_W
+    reg_on = lgb.LGBMRegressor(**params)
+    reg_on.fit(Xtr[on_tr], ytr[on_tr], eval_set=[(Xva[on_va], yva[on_va])],
+               eval_metric="l1", callbacks=stop)
+
+    prob_va = smooth(clf.predict_proba(Xva)[:, 1], Xva.index)
+    thr = best_threshold(yva, prob_va)
+    print(f"two-stage threshold chosen on validation house: {thr}")
+
+    def two_stage(X):
+        prob = smooth(clf.predict_proba(X)[:, 1], X.index)
+        return np.where(prob > thr, np.clip(reg_on.predict(X), 0, WM_MAX_W), 0.0)
+
+    def all_preds(X):
+        return {"always_off": np.zeros(len(X)),
+                "profile": profile_baseline(ytr, Xtr, X),
+                "lgbm_direct": np.clip(model.predict(X), 0, WM_MAX_W),
+                "lgbm_2stage": two_stage(X)}
+
+    preds = all_preds(Xte)
     table = pd.DataFrame({k: metrics(yte, p, yte.index) for k, p in preds.items()}).T
     # validation-house numbers too, to show the result is not specific to one home
-    pva = {"always_off": np.zeros(len(yva)), "profile": profile_baseline(ytr, Xtr, Xva),
-           "lightgbm": np.clip(model.predict(Xva), 0, WM_MAX_W)}
-    vtable = pd.DataFrame({k: metrics(yva, p, yva.index) for k, p in pva.items()}).T
+    # (note: the threshold was tuned here, so these are slightly optimistic)
+    vtable = pd.DataFrame({k: metrics(yva, p, yva.index) for k, p in all_preds(Xva).items()}).T
 
     res = pd.DataFrame({"aggregate": mte["aggregate"], "actual": yte, **preds}, index=yte.index)
+    res["lightgbm"] = res["lgbm_2stage"]
     res.to_parquet(OUT_DIR / "model_predictions_test.parquet")
     plot_actual_vs_pred(res, TEST[0])
     plot_failures(res, TEST[0])
     plot_metrics(table)
 
-    imp = pd.Series(model.feature_importances_, index=Xtr.columns).sort_values(ascending=False)
+    imp = pd.Series(clf.feature_importances_, index=Xtr.columns).sort_values(ascending=False)
     lines = ["# Model results", "",
              f"Train houses {TRAIN}, validation house {VAL}, test house {TEST}. "
-             f"Best iteration: {model.best_iteration_}.", "",
+             f"Best iterations: direct {model.best_iteration_}, classifier {clf.best_iteration_}, "
+             f"running-power regressor {reg_on.best_iteration_}. "
+             f"Two-stage threshold (chosen on validation house): {thr}.", "",
              f"## Test house {TEST[0]}", "", table.round(3).to_string(), "",
              f"## Validation house {VAL[0]}", "", vtable.round(3).to_string(), "",
-             "## Top 10 features (split count)", "", imp.head(10).to_string()]
+             "## Top 10 features of the classifier (split count)", "", imp.head(10).to_string()]
     (OUT_DIR / "model_metrics.md").write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))
 

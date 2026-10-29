@@ -202,4 +202,42 @@ The model went through three versions, all evaluated on House 17: (1) the direct
 (which were on House 17); (3) applying the EDA cycle rule to predictions. The threshold was always
 chosen on House 15, but because design changes were made after seeing test-house errors, the test
 numbers are slightly optimistic. Version 2 to 3 changed House 17 F1 from 0.465 to 0.481 and energy
-error from +90% to +87%. A clean re-evaluation would use leave-one-house-out over more homes.
+error from +90% to +87%. Because of this, the design was then **frozen** and re-evaluated cleanly
+with leave-one-house-out (§3.8), where no test house influenced any choice.
+
+### 3.8 Leave-one-house-out: how well does it generalise? ([`figures/loho_results.png`](figures/loho_results.png))
+
+`src/loho.py` repeats the frozen pipeline six times. Each house is the test house once; the next
+house in the list is the validation house (early stopping and threshold only); the other four are
+for training. Full tables: [`outputs/loho_summary.md`](outputs/loho_summary.md).
+
+![leave-one-house-out](figures/loho_results.png)
+
+| Held-out test house | 2 | 5 | 7 | 9 | 15 | 17 | **Median** |
+|---|---|---|---|---|---|---|---|
+| F1, lgbm_2stage | 0.30 | 0.11 | 0.61 | 0.39 | 0.71 | 0.45 | **0.42** |
+| F1, lgbm_direct | 0.21 | 0.26 | 0.42 | 0.25 | 0.62 | 0.38 | **0.32** |
+| F1, profile baseline | 0.13 | 0.18 | 0.24 | 0.08 | 0.07 | 0.07 | **0.10** |
+| MAE while running (W), lgbm_2stage | 305 | 387 | 330 | 279 | 244 | 195 | **292** |
+| MAE while running (W), always_off | 385 | 391 | 452 | 558 | 586 | 435 | **443** |
+| Energy error, lgbm_2stage | +67% | -62% | +8% | +244% | -21% | +135% | **+38%** |
+| Energy error, lgbm_direct | +17% | -35% | -42% | +95% | -42% | +8% | **-13%** |
+
+**What this shows.**
+- **Detection generalises, with a wide spread.** The two-stage model beats both the direct model
+  and the usage-profile baseline in 5 of 6 homes (median F1 0.42 vs 0.32 vs 0.10). It also tracks
+  power while running better than always-off in every home (median 292 vs 443 W; House 5 only
+  marginally, 387 vs 391 W).
+- **House 5 is the clear failure** (F1 0.11, recall 7%). Its cycles are the shortest and smallest
+  (median 46 min, 0.31 kWh) and its machine idles at a few watts (§2.2), so the classifier, trained
+  on homes with longer hotter washes and with its threshold set on House 7, rarely fires.
+- **Energy totals do not generalise.** Errors range from -62% to +244% (two-stage) and -42% to +95%
+  (direct). On daily energy error the two-stage model beats always-off in only 3 of 6 homes; the
+  direct model in 5 of 6, but by small margins and much worse in House 9. House 9's +244% has
+  a likely physical cause: it also owns a **washer-dryer on another channel** (readme), whose
+  heating looks identical to the washing machine's, so its runs are counted as washing.
+- The single-split House 17 result (F1 0.48) sits near the middle of this range (0.45 in its LOHO
+  fold), so §3.4 was neither unusually lucky nor unlucky.
+
+**Conclusion.** With aggregate data alone, the model is useful for *when* washing happens across
+homes, not for *how much energy* one home's machine uses.

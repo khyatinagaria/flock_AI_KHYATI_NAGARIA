@@ -7,9 +7,9 @@
 
 | Use | Suitable? | Why |
 |---|---|---|
-| **Detecting when a household washes** (time of day, weekday, cycles per week) | **Yes, with care** | On homes it never saw, it finds 77 to 82% of running minutes (F1 0.48 to 0.74). Errors are mostly extra detections, not missed washes. |
+| **Detecting when a household washes** (time of day, weekday, cycles per week) | **Yes, with care** | Tested on each of six homes it never saw: median F1 0.42 (range 0.11 to 0.71), against 0.10 for a usage-profile baseline. Beats the baselines in 5 of 6 homes; fails on a home with very short, low-energy washes. |
 | **Aggregated timing patterns across many homes** (e.g. share of washes in the evening peak) | **Yes** | Individual false alarms average out across a population; timing is what the model gets right. |
-| **Per-home washing-machine kWh on a bill** | **No** | Energy error was -6% on one unseen home and +87% on another. |
+| **Per-home washing-machine kWh on a bill** | **No** | Across six unseen homes the energy error ranged from -62% to +244%. |
 | **Real-time alerts** ("your wash just finished") | **Not as built** | It uses 60 minutes of future data; it would need a delayed version. |
 | **15- or 30-minute smart-meter data** | **No** | Built and tested only on 1-minute data (see below). |
 
@@ -40,8 +40,8 @@ energy in these homes, so the bill saving for the customer is small; the value i
 - **Missing data.** 6 to 25% of minutes were missing per house, with outages up to 62 days. Stalled
   meters can repeat one value for hours; these must be filtered or they look like long appliance runs.
 - **Household differences.** Cycles per week (3.5 to 11), energy per cycle (0.31 to 0.70 kWh) and
-  timing differ a lot between homes. A model learned on four homes generalises unevenly, and one
-  test home is a small sample.
+  timing differ a lot between homes. A model learned on four homes generalises unevenly (F1 0.11
+  to 0.71 across six held-out homes); washer-dryers and other heating appliances inflate estimates.
 - **UK to India.** These results should not be transferred without new data. Many Indian washing
   machines (especially semi-automatics and top-loaders) have no internal heater and wash cold, which
   removes the ~2 kW signature the model depends on. Other differences: different appliance mix

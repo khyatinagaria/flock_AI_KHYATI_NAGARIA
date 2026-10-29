@@ -18,7 +18,8 @@ Models
     lgbm_2stage  "detect, then estimate": a classifier gives P(running), smoothed
                  over 5 min; where it exceeds a threshold chosen on the validation
                  house, a regressor trained only on running minutes gives the watts;
-                 elsewhere 0 W. This removes the low-level false power the direct
+                 elsewhere 0 W. Predicted running minutes must also form a cycle
+                 under the EDA rule (pauses <= 10 min joined, >= 10 min long). This removes the low-level false power the direct
                  regressor spreads over idle minutes.
 
 Data filter: minutes where the aggregate is exactly constant for an hour are
@@ -45,6 +46,8 @@ from clean_data import load_house
 
 TRAIN, VAL, TEST = [2, 5, 7, 9], [15], [17]
 ON_W = 20            # same "running" threshold as the EDA
+BRIDGE_MIN = 10      # same cycle rule as the EDA (src/wm_eda.py)
+MIN_DUR_MIN = 10
 WM_MAX_W = 3000      # clip target to a physically sensible range
 SEED = 0
 
@@ -104,12 +107,37 @@ def smooth(p, index):
     return pd.Series(p, index=index).rolling("5min", center=True).median().to_numpy()
 
 
-def best_threshold(y, prob):
-    """Probability threshold that maximises on/off F1 on the validation house."""
+def cycle_rule(running, index):
+    """Apply the EDA cycle definition to predicted running minutes: join pauses of
+    <= BRIDGE_MIN minutes, then drop predicted cycles shorter than MIN_DUR_MIN.
+    A washing machine cannot run for 3 minutes, a kettle can."""
+    s = pd.Series(running, index=index).astype(float)
+    full = s.reindex(pd.date_range(index.min(), index.max(), freq="1min"), fill_value=0) > 0
+    on = full.to_numpy().copy()
+    starts, ends = runs(~on)
+    for a, b in zip(starts, ends):
+        if 0 < a and b < len(on) and b - a <= BRIDGE_MIN:
+            on[a:b] = True
+    starts, ends = runs(on)
+    for a, b in zip(starts, ends):
+        if b - a < MIN_DUR_MIN:
+            on[a:b] = False
+    return pd.Series(on, index=full.index).reindex(index).to_numpy()
+
+
+def runs(mask):
+    m = np.r_[False, np.asarray(mask, bool), False]
+    d = np.diff(m.astype(int))
+    return np.flatnonzero(d == 1), np.flatnonzero(d == -1)
+
+
+def best_threshold(y, prob, index):
+    """Probability threshold that maximises on/off F1 on the validation house
+    (after the cycle rule, so the threshold is tuned for the full pipeline)."""
     on = np.asarray(y) > ON_W
     best = (0.5, -1)
-    for t in np.arange(0.1, 0.91, 0.05):
-        pred = prob > t
+    for t in [0.02, 0.05, *np.arange(0.1, 0.91, 0.05)]:
+        pred = cycle_rule(prob > t, index)
         tp = (on & pred).sum()
         f1 = 2 * tp / max(on.sum() + pred.sum(), 1)
         if f1 > best[1]:
@@ -234,12 +262,13 @@ def main():
                eval_metric="l1", callbacks=stop)
 
     prob_va = smooth(clf.predict_proba(Xva)[:, 1], Xva.index)
-    thr = best_threshold(yva, prob_va)
+    thr = best_threshold(yva, prob_va, Xva.index)
     print(f"two-stage threshold chosen on validation house: {thr}")
 
     def two_stage(X):
         prob = smooth(clf.predict_proba(X)[:, 1], X.index)
-        return np.where(prob > thr, np.clip(reg_on.predict(X), 0, WM_MAX_W), 0.0)
+        running = cycle_rule(prob > thr, X.index)
+        return np.where(running, np.clip(reg_on.predict(X), 0, WM_MAX_W), 0.0)
 
     def all_preds(X):
         return {"always_off": np.zeros(len(X)),

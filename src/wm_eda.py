@@ -194,7 +194,7 @@ def plot_patterns(cycles):
     houses = [h for h in cycles if not cycles[h].empty]
     hour = pd.DataFrame({h: cycles[h].start_local.dt.hour.value_counts(normalize=True)
                          .reindex(range(24), fill_value=0) for h in houses}).T * 100
-    dow = pd.DataFrame({h: cycles[h].start_local.dt.dayofweek.value_counts(normalize=True)
+    dow = pd.DataFrame({h: cycles[h].start_local.dt.day_of_week.value_counts(normalize=True)
                         .reindex(range(7), fill_value=0) for h in houses}).T * 100
     fig, axes = plt.subplots(1, 2, figsize=(12, 3.4), gridspec_kw={"width_ratios": [24, 9]})
     for ax, tab, xl in [(axes[0], hour, list(range(24))), (axes[1], dow, DOW)]:

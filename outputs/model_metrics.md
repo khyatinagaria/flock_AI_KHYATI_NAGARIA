@@ -1,30 +1,32 @@
 # Model results
 
-Train houses [2, 5, 7, 9], validation house [15], test house [17]. Best iteration: 156.
+Train houses [2, 5, 7, 9], validation house [15], test house [17]. Best iterations: direct 125, classifier 65, running-power regressor 283. Two-stage threshold (chosen on validation house): 0.1.
 
 ## Test house 17
 
-            MAE all minutes (W)  MAE while running (W)  total energy error (%)  daily energy MAE (kWh/day)  on/off precision  on/off recall  on/off F1
-always_off               10.460                435.109                -100.000                       0.245             0.000          0.000      0.000
-profile                  34.904                399.503                 152.529                       0.473             0.036          0.791      0.070
-lightgbm                 15.319                291.691                  15.386                       0.230             0.249          0.812      0.382
+             MAE all minutes (W)  MAE while running (W)  total energy error (%)  daily energy MAE (kWh/day)  on/off precision  on/off recall  on/off F1
+always_off                10.507                435.109                -100.000                       0.245             0.000          0.000      0.000
+profile                   35.296                399.195                 154.972                       0.479             0.037          0.801      0.070
+lgbm_direct               14.109                295.968                   1.081                       0.202             0.253          0.790      0.383
+lgbm_2stage               16.419                193.576                  89.810                       0.259             0.329          0.791      0.465
 
 ## Validation house 15
 
-            MAE all minutes (W)  MAE while running (W)  total energy error (%)  daily energy MAE (kWh/day)  on/off precision  on/off recall  on/off F1
-always_off               17.194                585.997                -100.000                       0.381             0.000          0.000      0.000
-profile                  41.830                557.162                  53.917                       0.587             0.038          0.671      0.071
-lightgbm                 13.685                362.338                 -43.086                       0.250             0.542          0.716      0.617
+             MAE all minutes (W)  MAE while running (W)  total energy error (%)  daily energy MAE (kWh/day)  on/off precision  on/off recall  on/off F1
+always_off                17.221                585.997                -100.000                       0.381             0.000          0.000      0.000
+profile                   42.206                556.901                  55.821                       0.590             0.038          0.680      0.072
+lgbm_direct               13.696                357.845                 -41.622                       0.248             0.566          0.694      0.624
+lgbm_2stage               10.212                215.434                  -6.778                       0.147             0.724          0.747      0.735
 
-## Top 10 features (split count)
+## Top 10 features of the classifier (split count)
 
-min_120        610
-hour           540
-std_120        478
-max_120        445
-above_min60    383
-mean_120       371
-min_60         359
-lead_30        356
-steps_60       336
-lag_30         294
+min_120     370
+hour        343
+max_120     324
+std_120     235
+dow         192
+std_5       132
+lag_30      130
+lead_30     130
+max_60      119
+mean_120    113
